@@ -1,0 +1,11 @@
+deploy_user: deploy
+app_dir: /opt/guestbook
+
+kubectl_version: v1.30.2
+trivy_deb_url: "https://github.com/aquasecurity/trivy/releases/download/v0.53.0/trivy_0.53.0_Linux-64bit.deb"
+cosign_deb_url: "https://github.com/sigstore/cosign/releases/download/v2.4.0/cosign_2.4.0_amd64.deb"
+
+db_name: guestbook
+db_user: guestbook
+
+# Секреты — в group_vars/vault.yml (ansible-vault).

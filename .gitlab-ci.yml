@@ -1,0 +1,73 @@
+stages:
+  - test
+  - build
+  - scan
+  - sbom
+  - sign
+  - push
+  - update-gitops
+
+variables:
+  IMAGE: cr.yandex/${REGISTRY_ID}/guestbook
+  TAG: ${CI_COMMIT_SHORT_SHA}
+
+test:
+  stage: test
+  image: python:3.12-slim
+  script:
+    - pip install --no-cache-dir -r app/requirements.txt
+    - python -m compileall app
+
+build:
+  stage: build
+  image: docker:27
+  services: [docker:27-dind]
+  script:
+    - docker build -t "${IMAGE}:${TAG}" .
+    - docker save "${IMAGE}:${TAG}" -o image.tar
+  artifacts:
+    paths: [image.tar]
+    expire_in: 1 hour
+
+scan:
+  stage: scan
+  image: aquasec/trivy:latest
+  script:
+    - trivy image --input image.tar --exit-code 1 --severity HIGH,CRITICAL --no-progress
+
+sbom:
+  stage: sbom
+  image: aquasec/trivy:latest
+  script:
+    - trivy image --input image.tar --format cyclonedx --output sbom.json
+  artifacts:
+    paths: [sbom.json]
+    expire_in: 1 week
+
+sign:
+  stage: sign
+  image: gcr.io/projectsigstore/cosign:latest
+  script:
+    - cosign sign --yes "${IMAGE}:${TAG}"
+
+push:
+  stage: push
+  image: docker:27
+  services: [docker:27-dind]
+  script:
+    - echo "${YC_SA_KEY}" | docker login --username json_key --password-stdin cr.yandex
+    - docker load -i image.tar
+    - docker push "${IMAGE}:${TAG}"
+
+update-gitops:
+  stage: update-gitops
+  image: alpine:3.20
+  script:
+    - apk add --no-cache sed git
+    - 'sed -i "s|image: ${IMAGE}:.*|image: ${IMAGE}:${TAG}|" k8s/app-deployment.yaml'
+    - git config user.email "ci@example.com"
+    - git config user.name "GitLab CI"
+    - git commit -am "deploy ${TAG}" || echo "no changes"
+    - git push "https://oauth2:${GITLAB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" HEAD:${CI_COMMIT_BRANCH}
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"

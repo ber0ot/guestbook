@@ -1,0 +1,120 @@
+---
+# ansible-playbook -i inventory.ini bootstrap.yml --ask-vault-pass
+
+- name: Базовая подготовка хостов
+  hosts: all
+  become: true
+  tasks:
+    - name: Обновить кэш apt
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Базовые пакеты
+      ansible.builtin.apt:
+        name: [ca-certificates, curl, gnupg, ufw]
+        state: present
+
+    - name: Пользователь для деплоя
+      ansible.builtin.user:
+        name: "{{ deploy_user }}"
+        groups: sudo
+        append: true
+        shell: /bin/bash
+        create_home: true
+
+    - name: Открыть порты
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop: ["22", "8080"]
+
+    - name: Включить firewall
+      community.general.ufw:
+        state: enabled
+        policy: deny
+
+- name: Docker
+  hosts: docker
+  become: true
+  tasks:
+    - name: GPG-ключ Docker
+      ansible.builtin.apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Репозиторий Docker
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch=amd64] https://download.docker.com/linux/ubuntu
+          {{ ansible_distribution_release }} stable
+        state: present
+
+    - name: Установка Docker
+      ansible.builtin.apt:
+        name: [docker-ce, docker-ce-cli, containerd.io, docker-compose-plugin]
+        state: present
+        update_cache: true
+
+    - name: Служба Docker
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Пользователь в группе docker
+      ansible.builtin.user:
+        name: "{{ deploy_user }}"
+        groups: docker
+        append: true
+
+- name: Инструменты
+  hosts: tools
+  become: true
+  tasks:
+    - name: kubectl
+      ansible.builtin.get_url:
+        url: "https://dl.k8s.io/release/{{ kubectl_version }}/bin/linux/amd64/kubectl"
+        dest: /usr/local/bin/kubectl
+        mode: "0755"
+
+    - name: Trivy
+      ansible.builtin.apt:
+        deb: "{{ trivy_deb_url }}"
+        state: present
+
+    - name: Cosign
+      ansible.builtin.apt:
+        deb: "{{ cosign_deb_url }}"
+        state: present
+
+- name: Стенд
+  hosts: docker
+  become: true
+  tasks:
+    - name: Каталог
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ deploy_user }}"
+        mode: "0755"
+
+    - name: docker-compose.yml
+      ansible.builtin.copy:
+        src: ../docker-compose.yml
+        dest: "{{ app_dir }}/docker-compose.yml"
+        owner: "{{ deploy_user }}"
+        mode: "0644"
+
+    - name: .env
+      ansible.builtin.template:
+        src: templates/env.j2
+        dest: "{{ app_dir }}/.env"
+        owner: "{{ deploy_user }}"
+        mode: "0600"
+
+    - name: Запуск
+      community.docker.docker_compose_v2:
+        project_src: "{{ app_dir }}"
+        state: present

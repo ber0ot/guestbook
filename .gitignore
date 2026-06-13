@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Локальные секреты и окружение
+.env
+*.key
+*.pem
+kubeconfig
+
+# CI-артефакты
+image.tar
+sbom.json
+
+# Системные
+.DS_Store
